@@ -1,32 +1,5 @@
 #include "tensor.h"
-
-#define CUDA_KERNAL_LOOP(i,n)\
-    for(int i=blockIdx.x*blockDim.x+threadIdx.x;i<n;i+=blockDim.x*gridDim.x)
-
-__global__ void relu_gpu(float* in, float* out, int size){
-    CUDA_KERNAL_LOOP(i, size){
-        out[i] = in[i] > 0 ? in[i] : 0;
-    }
-}
-
-__global__ void relu_gpu_backward(float* in_grad, float* out_grad, float* x, int size){
-    CUDA_KERNAL_LOOP(i, size){
-        in_grad[i] = x[i] > 0 ? out_grad[i] : 0;
-    }
-}
-
-__global__ void sigmoid_gpu(float* in, float* out, int size){
-    CUDA_KERNAL_LOOP(i, size){
-        out[i] = 1 / (1 + exp(-in[i]));
-    }
-}
-
-__global__ void sigmoid_gpu_backward(float* in_grad, float* out_grad, float* x, int size){
-    CUDA_KERNAL_LOOP(i, size){
-        float sig = 1 / (1 + exp(-x[i]));
-        in_grad[i] = sig * (1 - sig) * out_grad[i];
-    }
-}
+#include "func.h"
 
 int main(){
 
@@ -38,6 +11,7 @@ int main(){
         data[i] = i - 3;
     }
     t.print();
+    std::cout << std::endl;
 
     Tensor g({2,3},Device::GPU);
     float* g_data = (float*) malloc(g.get_size());
@@ -48,22 +22,36 @@ int main(){
     }
     cudaMemcpy(g.get_data(), g_data, g.get_size() * sizeof(float), cudaMemcpyHostToDevice);
     g.print();
+    std::cout << std::endl;
 
     free(g_data);
 
     Tensor f = t.gpu();
-    t.print();
+    f.print();
+    std::cout << std::endl;
     Tensor h = g.cpu();
     h.print();
+    std::cout << std::endl;
+
+    Tensor k({2,3,2}, Device::GPU);
+    Tensor k_cpu = k.cpu();
+    for (int i = 0 ;i < k_cpu.get_size();++i){
+        k_cpu.get_data()[i] = i - 4;
+    }
+    k = k_cpu.gpu();
+    k.print();
 
 
     // Test2 relu和sigmoid函数的实现
     std::cout << "Test2 relu函数的实现" << std::endl;
-    relu_gpu<<<1, g.get_size()>>>(g.get_data(), g.get_data(), g.get_size());
-    g.print();
+    Tensor g_relu({2,3}, Device::GPU);
+    relu_gpu<<<1, g.get_size()>>>(g.get_data(), g_relu.get_data(), g.get_size());
+    g_relu.print();
     std::cout << "Test2 sigmoid函数的实现" << std::endl;
-    sigmoid_gpu<<<1, g.get_size()>>>(g.get_data(), g.get_data(), g.get_size());
-    g.print();
+    Tensor g_sigmoid({2,3}, Device::GPU);
+    sigmoid_gpu<<<1, g.get_size()>>>(g.get_data(), g_sigmoid.get_data(), g.get_size());
+    g_sigmoid.print();
+    std::cout << std::endl;
 
     // Test3 relu_backward函数的实现
     std::cout << "Test3 relu_backward函数的实现" << std::endl;
