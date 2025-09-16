@@ -8,17 +8,14 @@ int main(){
     std::cout << "Test1 Tensor类的实现" << std::endl;
     std::cout << "初始化Tensor类" << std::endl;
     Tensor<float> t({3,2}, Device::CPU);
-    float* data = t.get_data();
     for (int i = 0; i < t.get_size(); ++i){
-        data[i] = i - 3;
+        t.get_data()[i] = i - 3;
     }
     t.print();
     std::cout << std::endl;
 
     Tensor<float> g({2,3},Device::GPU);
     float* g_data = (float*) malloc(g.get_size());
-    cudaMemcpy(g_data, g.get_data(), g.get_size() * sizeof(float), cudaMemcpyDeviceToHost);
-
     for (int i = 0; i < g.get_size(); ++i){
         g_data[i] = i*2 - 6;
     }
@@ -32,6 +29,7 @@ int main(){
     Tensor<float> f = t.gpu();
     f.print();
     std::cout << std::endl;
+    
     Tensor<float> h = g.cpu();
     h.print();
     std::cout << std::endl;
