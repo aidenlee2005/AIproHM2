@@ -1,3 +1,6 @@
+#ifndef TENSOR_H
+#define TENSOR_H
+
 #include <iostream>
 #include <vector>
 #include <cuda.h>
@@ -18,7 +21,7 @@ private:
     int size{1};
 
 public:
-    Tensor(std::vector<int> s, device d):shape(s), device(d) {
+    Tensor(std::vector<int> s, Device d):shape(s), device(d) {
         for (int dim: shape){
             size *= dim;
         }
@@ -35,6 +38,38 @@ public:
         }
     }
 
+    Tensor(Tensor&& other) noexcept:  //移动构造函数
+        shape(std::move(other.shape)),
+        strides(std::move(other.strides)),
+        h_data(std::move(other.h_data)),
+        d_data(other.d_data),
+        device(other.device),
+        size(other.size){
+            other.d_data = nullptr;
+            other.size = 0;
+        }
+
+    Tensor& operator=(Tensor&& other) noexcept {  //移动赋值运算符
+        if (this != &other) {
+            if (device == Device::GPU && d_data != nullptr) {
+                cudaFree(d_data);
+            }
+            shape = std::move(other.shape);
+            strides = std::move(other.strides);
+            h_data = std::move(other.h_data);
+            d_data = other.d_data;
+            device = other.device;
+            size = other.size;
+
+            other.d_data = nullptr; //释放内存
+            other.size = 0;
+        }
+        return *this;
+    }
+
+    Tensor(const Tensor&) = delete;
+    Tensor& operator=(const Tensor&) = delete;
+
     float* get_data(){
         if (device == Device::CPU){
             return h_data.get();
@@ -44,13 +79,18 @@ public:
         }
     }
 
+    std::vector<int> get_shape(){
+        return shape;
+    }
+
     int get_size(){
         return size;
     }
 
     ~Tensor(){
         if (device == Device::GPU){
-            cudaFree(d_data);
+            if (d_data != nullptr)
+                cudaFree(d_data);
         }
         else if (device == Device::CPU){
             h_data.reset();
@@ -59,23 +99,22 @@ public:
 
     Tensor cpu(){
         if (device == Device::CPU){
-            return *this;
+            return std::move(*this);
         }
         Tensor t(shape, Device::CPU);
         cudaMemcpy(t.get_data(), d_data, size * sizeof(float), cudaMemcpyDeviceToHost);
-        return t;
+        return std::move(t);
     }
 
     Tensor gpu(){
         if (device == Device::GPU){
-            return *this;
+            return std::move(*this);
         }
         Tensor t(shape, Device::GPU);
         cudaMemcpy(t.get_data(), h_data.get(), size * sizeof(float), cudaMemcpyHostToDevice);
-        return t;
+        return std::move(t);
     }
 
-    //辅助函数
     void print(){
         if (device == Device::CPU){
             for (int i = 0; i < size; i++){
@@ -95,11 +134,5 @@ public:
 
 };
 
-int main(){
-    Tensor t({3,2}, Device::CPU);
-    float* data = t.get_data();
-    for (int i = 0; i < t.get_size(); ++i){
-        data[i] = i;
-    }
-    t.print();
-}
+
+#endif //TENSOR_H
