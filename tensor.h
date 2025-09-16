@@ -11,12 +11,13 @@ enum class Device{
     GPU
 };
 
+template<typename T>
 class Tensor{
 private:
     std::vector<int> shape;
     std::vector<int> strides;
-    std::unique_ptr<float[]> h_data;
-    float* d_data = nullptr;
+    std::unique_ptr<T[]> h_data;
+    T* d_data = nullptr;
     Device device;
     int size{1};
 
@@ -31,10 +32,10 @@ public:
             strides.push_back(k);
         }
         if (device == Device::CPU){
-            h_data = std::make_unique<float[]>(size);
+            h_data = std::make_unique<T[]>(size);
         }
         else{
-            cudaMalloc(&d_data, size * sizeof(float));
+            cudaMalloc(&d_data, size * sizeof(T));
         }
     }
 
@@ -70,7 +71,7 @@ public:
     Tensor(const Tensor&) = delete;
     Tensor& operator=(const Tensor&) = delete;
 
-    float* get_data(){
+    T* get_data(){
         if (device == Device::CPU){
             return h_data.get();
         }
@@ -102,7 +103,7 @@ public:
             return std::move(*this);
         }
         Tensor t(shape, Device::CPU);
-        cudaMemcpy(t.get_data(), d_data, size * sizeof(float), cudaMemcpyDeviceToHost);
+        cudaMemcpy(t.get_data(), d_data, size * sizeof(T), cudaMemcpyDeviceToHost);
         return std::move(t);
     }
 
@@ -111,20 +112,47 @@ public:
             return std::move(*this);
         }
         Tensor t(shape, Device::GPU);
-        cudaMemcpy(t.get_data(), h_data.get(), size * sizeof(float), cudaMemcpyHostToDevice);
+        cudaMemcpy(t.get_data(), h_data.get(), size * sizeof(T), cudaMemcpyHostToDevice);
         return std::move(t);
     }
 
     void print(){
         if (device == Device::CPU){
+            int shapedim = shape.size();
+            for (int i = 0; i < shapedim; i++){
+                std::cout << '[';
+            }
+            std::cout << ' ';
             for (int i = 0; i < size; i++){
                 std::cout << h_data[i] << " ";
+                int count = 0;
                 for (int dim: strides){
-                    if (dim!= 1 && (i+1) % dim == 0){
-                        std::cout << std::endl;
+                    if (dim!= 1 && (i+1) % dim == 0 && i!= size-1){
+                        // std::cout << ']';
+                        // std::cout << std::endl;
+                        // std::cout << '[';
+                        count ++;
                     }
                 }
+                for (int j = 0; j < count; j++){
+                    std::cout << ']';
+                }
+                if (count != 0){
+                    std::cout << std::endl;
+                    for (int j = 0; j < shapedim - count ;j++){
+                        std::cout << ' ';
+                    }
+                }
+                for (int j = 0; j < count; j++){
+                    std::cout << '[';
+                }
+                if (count != 0)
+                    std::cout << ' ';                
             }
+            for (int i = 0; i < shape.size(); i++){
+                std::cout << ']';
+            }
+            std::cout << std::endl;
         }
         else if (device == Device::GPU){
             Tensor t = this->cpu();

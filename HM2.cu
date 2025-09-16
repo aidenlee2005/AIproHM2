@@ -4,8 +4,10 @@
 int main(){
 
     // Test1 Tensor类的实现
+    std::cout << "------------------" <<std::endl;
     std::cout << "Test1 Tensor类的实现" << std::endl;
-    Tensor t({3,2}, Device::CPU);
+    std::cout << "初始化Tensor类" << std::endl;
+    Tensor<float> t({3,2}, Device::CPU);
     float* data = t.get_data();
     for (int i = 0; i < t.get_size(); ++i){
         data[i] = i - 3;
@@ -13,7 +15,7 @@ int main(){
     t.print();
     std::cout << std::endl;
 
-    Tensor g({2,3},Device::GPU);
+    Tensor<float> g({2,3},Device::GPU);
     float* g_data = (float*) malloc(g.get_size());
     cudaMemcpy(g_data, g.get_data(), g.get_size() * sizeof(float), cudaMemcpyDeviceToHost);
 
@@ -26,15 +28,17 @@ int main(){
 
     free(g_data);
 
-    Tensor f = t.gpu();
+    std::cout << "gpu()和cpu()函数的实现" << std::endl;
+    Tensor<float> f = t.gpu();
     f.print();
     std::cout << std::endl;
-    Tensor h = g.cpu();
+    Tensor<float> h = g.cpu();
     h.print();
     std::cout << std::endl;
 
-    Tensor k({2,3,2}, Device::GPU);
-    Tensor k_cpu = k.cpu();
+    std::cout << "多维Tensor和int数据类型的Tensor" << std::endl;
+    Tensor<int> k({2,3,3}, Device::GPU);
+    Tensor<int> k_cpu = k.cpu();
     for (int i = 0 ;i < k_cpu.get_size();++i){
         k_cpu.get_data()[i] = i - 4;
     }
@@ -43,29 +47,31 @@ int main(){
 
 
     // Test2 relu和sigmoid函数的实现
+    std::cout << "------------------" <<std::endl;
     std::cout << "Test2 relu函数的实现" << std::endl;
-    Tensor g_relu({2,3}, Device::GPU);
+    Tensor<float> g_relu({2,3}, Device::GPU);
     relu_gpu<<<1, g.get_size()>>>(g.get_data(), g_relu.get_data(), g.get_size());
     g_relu.print();
     std::cout << "Test2 sigmoid函数的实现" << std::endl;
-    Tensor g_sigmoid({2,3}, Device::GPU);
+    Tensor<float> g_sigmoid({2,3}, Device::GPU);
     sigmoid_gpu<<<1, g.get_size()>>>(g.get_data(), g_sigmoid.get_data(), g.get_size());
     g_sigmoid.print();
     std::cout << std::endl;
 
     // Test3 relu_backward函数的实现
+    std::cout << "----------------------------" <<std::endl;
     std::cout << "Test3 relu_backward函数的实现" << std::endl;
-    Tensor out_grad({2,3}, Device::GPU);
-    Tensor cpu_tmp = out_grad.cpu();
+    Tensor<float> out_grad({2,3}, Device::GPU);
+    Tensor<float> cpu_tmp = out_grad.cpu();
     for (int i = 0; i < out_grad.get_size(); ++i){
         cpu_tmp.get_data()[i] = i*2 - 3;  // -3, -1, 1, 3, 5, 7
     }
     out_grad = cpu_tmp.gpu();
 
-    Tensor in_grad({2,3}, Device::GPU);
+    Tensor<float> in_grad({2,3}, Device::GPU);
 
-    Tensor x({2,3}, Device::GPU);
-    Tensor x_cpu_tmp = x.cpu();
+    Tensor<float> x({2,3}, Device::GPU);
+    Tensor<float> x_cpu_tmp = x.cpu();
     for (int i = 0; i < x.get_size(); ++i){
         x_cpu_tmp.get_data()[i] = i - 3; // -3, -2, -1, 0, 1, 2
     }
