@@ -8,6 +8,10 @@
 #include <curand.h>
 #include <cuda_runtime.h>
 
+#ifndef CUDA_KERNAL_LOOP
+#define CUDA_KERNAL_LOOP(i,n)\
+    for(int i=blockIdx.x*blockDim.x+threadIdx.x;i<n;i+=blockDim.x*gridDim.x)
+#endif
 
 enum class TransposeType {
     NoTranspose,
@@ -99,16 +103,16 @@ __global__ void quantize_one_decimal(float* data, int n){
 }
 
 //random filling
-void matrix_init(float* A, int r, int c, unsigned long long seed = 123456){
+void matrix_init(float* A, int n, unsigned long long seed = 123456){
     curandGenerator_t gen;
     curandCreateGenerator(&gen, CURAND_RNG_PSEUDO_DEFAULT);
     curandSetPseudoRandomGeneratorSeed(gen, seed);
-    curandGenerateUniform(gen, A, r * c);
+    curandGenerateUniform(gen, A, n);
     curandDestroyGenerator(gen);
 
     int bs = 256;
-    int gs = (r * c + bs - 1) / bs;
-    quantize_one_decimal<<<gs, bs>>>(A, r * c);
+    int gs = (n + bs - 1) / bs;
+    quantize_one_decimal<<<gs, bs>>>(A, n);
 }
 
 
@@ -361,16 +365,15 @@ void backward_conv2d(float* input, float* filter,
     // Assume stride=1, padding=1, kernel_size=3
     int col_h = height * width;
     int col_w = 3 * 3 * in_channels;
-    cudaError_t cerr;
 
     // 1) im2col(input) -> d_input_col
     float* d_input_col = nullptr;
-    cerr = cudaMalloc(&d_input_col, (size_t)batch_size * col_h * col_w * sizeof(float));
+    cudaMalloc(&d_input_col, (size_t)batch_size * col_h * col_w * sizeof(float));
     im2col(input, d_input_col, batch_size, in_channels, height, width, stream);
 
     // 2) convert grad_output (NCHW) -> outcol (batch*col_h, out_channels)
     float* d_grad_outcol = nullptr;
-    cerr = cudaMalloc(&d_grad_outcol, (size_t)batch_size * col_h * out_channels * sizeof(float));
+    cudaMalloc(&d_grad_outcol, (size_t)batch_size * col_h * out_channels * sizeof(float));
     nchw_to_nhwc(grad_output, d_grad_outcol, batch_size, out_channels, height, width, stream);
 
 // // 调试片段：在调用 nchw_to_nhwc(...) 后插入（仅用于调试）
@@ -415,14 +418,14 @@ void backward_conv2d(float* input, float* filter,
 
     // 4) dInput: grad_input_col = d_grad_outcol * filter
     float* d_grad_input_col = nullptr;
-    cerr = cudaMalloc(&d_grad_input_col, (size_t)batch_size * col_h * col_w * sizeof(float));
+    cudaMalloc(&d_grad_input_col, (size_t)batch_size * col_h * col_w * sizeof(float));
 
     gemm_gpu(TransposeType::NoTranspose, TransposeType::NoTranspose,
         d_grad_outcol, filter, d_grad_input_col,
         batch_size * col_h, col_w, out_channels,
         1.0f, 0.0f, stream);
     // ensure GEMM finished before using d_grad_input_col on the same stream
-    cerr = cudaStreamSynchronize(stream);
+    cudaStreamSynchronize(stream);
 
     // 5) col2im: accumulate grad_input_col -> grad_input (NCHW)
     col2im(d_grad_input_col, grad_input, batch_size, in_channels, height, width, stream);
@@ -432,5 +435,77 @@ void backward_conv2d(float* input, float* filter,
     cudaFree(d_input_col);
     cudaFree(d_grad_outcol);
 }
+
+//Task 3: Max Pooling Layer
+
+__global__ void max_pool_forward_kernel(const float* input, float* output, float* mask,
+    int batch_size, int in_channels, int in_h, int in_w, int out_h, int out_w){
+    //Assume kernel_size=2, stride=2
+    int nthreads = batch_size * in_channels * out_h * out_w;
+    CUDA_KERNAL_LOOP(idx, nthreads){
+        int b = idx / (in_channels * out_h * out_w);  //batch index
+        int c = (idx % (in_channels * out_h * out_w)) / (out_h * out_w); //channel index
+        int h = (idx % (out_h * out_w)) / out_w; //height index
+        int w = idx % out_w; //width index
+        int h_in = h * 2;
+        int w_in = w * 2;
+        int max_idx = -1;
+        float max_val = -INT32_MAX;
+        for (int kh = 0; kh < 2; kh++){
+            for (int kw = 0; kw < 2; kw++){
+                int h_idx = h_in + kh;
+                int w_idx = w_in + kw;
+                if (h_idx >= 0 && h_idx < in_h && w_idx >= 0 && w_idx < in_w){
+                    int input_idx = b * in_channels * in_h * in_w + c * in_h * in_w + h_idx * in_w + w_idx; 
+                    float val = input[input_idx];
+                    if (val > max_val){
+                        max_val = val;
+                        max_idx = input_idx;
+                    }
+                }
+            }
+        }
+        output[idx] = max_val;
+        mask[idx] = (float)max_idx;
+    }
+}
+
+void forward_maxpool(const float* input, float* output, float* mask,
+    int batch_size, int in_channels, int in_h, int in_w,
+    int out_h, int out_w, cudaStream_t stream){
+        //Assume kernel_size=2, stride=2
+        int nthreads = batch_size * in_channels * out_h * out_w;
+        int bs = 256;
+        int gs = (nthreads + bs - 1) / bs;
+        max_pool_forward_kernel<<<gs, bs, 0, stream>>>(input, output, mask,
+            batch_size, in_channels, in_h, in_w, out_h, out_w);
+    }
+
+__global__ void max_pool_backward_kernel(const float* grad_output, const float* mask, float* grad_input,
+    int batch_size, int in_channels, int in_h, int in_w, int out_h, int out_w){
+        int nthreads = batch_size * in_channels * out_h * out_w;
+        int idx = blockIdx.x * blockDim.x + threadIdx.x;
+        if (idx >= nthreads) return;
+        int in_idx = (int)mask[idx];
+        size_t in_size = (size_t)batch_size * in_channels * in_h * in_w;
+        if (in_idx >= 0 && in_idx < in_size){
+            atomicAdd(&grad_input[in_idx], grad_output[idx]);
+        }
+    }
+
+void backward_maxpool(const float* grad_output, const float* mask, float* grad_input,
+    int batch_size, int in_channels, int in_h, int in_w,
+    int out_h, int out_w, cudaStream_t stream){
+        //Assume kernel_size=2, stride=2
+        int nthreads = batch_size * in_channels * out_h * out_w;
+        int bs = 256;
+        int gs = (nthreads + bs - 1) / bs;
+        //initialize grad_input to zero
+        size_t im_size = (size_t)batch_size * in_channels * in_h * in_w;
+        cudaError_t err = cudaMemsetAsync(grad_input, 0, im_size*sizeof(float), stream);
+        //scatter grad_output to grad_input according to mask
+        max_pool_backward_kernel<<<gs, bs, 0, stream>>>(grad_output, mask, grad_input,
+            batch_size, in_channels, in_h, in_w, out_h, out_w);
+    }
 
 #endif //LAYERS_H
