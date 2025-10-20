@@ -245,31 +245,37 @@ inline void nhwc_to_nchw(const float* bhwc, float* bchw,
 // BCHW -> BHWC 
 __global__ void nchw_to_nhwc_kernel(const float* bchw, float* bhwc,
                                       int batch, int out_channels, int height, int width){
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    int total = batch * out_channels * height * width;
+    size_t idx = (size_t)blockIdx.x * blockDim.x + threadIdx.x;
+    size_t total = (size_t)batch * out_channels * height * width;
     if (idx >= total) return;
 
-    int oc = idx % out_channels;
-    int r = idx / out_channels; // r in [0, batch*height*width-1]
+    // 依据 NCHW 线性布局恢复坐标： idx = (((b * C + oc) * H) + h) * W + w
+    int w = idx % width;
+    size_t t = idx / width;
+    int h = t % height;
+    t = t / height;
+    int oc = t % out_channels;
+    int b = t / out_channels;
+
     int col_h = height * width;
-    int b = r / col_h;
-    int pos = r % col_h; // pos = h*width + w
-    // outcol layout: (batch*col_h, out_channels) with row-major: index = (b*col_h + pos) * out_channels + oc
-    int outcol_idx = (b * col_h + pos) * out_channels + oc;
+    int outcol_idx = (b * col_h + h * width + w) * out_channels + oc;
     bhwc[outcol_idx] = bchw[idx];
 }
 
 inline void nchw_to_nhwc(const float* nchw, float* nhwc,
                            int batch, int out_channels, int height, int width,
                            cudaStream_t stream){
-    int total = batch * out_channels * height * width;
+    if (batch <= 0 || out_channels <= 0 || height <= 0 || width <= 0) return;
+    size_t total = (size_t)batch * out_channels * height * width;
     int blockSize = 256;
-    int gridSize = (total + blockSize - 1) / blockSize;
+    size_t gridSize64 = (total + blockSize - 1) / blockSize;
+    int gridSize = (int)std::min(gridSize64, (size_t)INT_MAX);
     nchw_to_nhwc_kernel<<<gridSize, blockSize, 0, stream>>>(nchw, nhwc,
                                                               batch, out_channels, height, width);
-    // 可选调试检查：
+    // 可选调试：
+    // cudaStreamSynchronize(stream);
     // cudaError_t err = cudaGetLastError();
-    // if (err != cudaSuccess) std::cerr << "nchw_to_outcol kernel launch failed: " << cudaGetErrorString(err) << std::endl;
+    // if (err != cudaSuccess) std::cerr << "nchw_to_nhwc kernel failed: " << cudaGetErrorString(err) << std::endl;
 }
 
 __global__ void col2im_kernal( float* grad_col, float* grad_input, 
@@ -360,21 +366,45 @@ void backward_conv2d(float* input, float* filter,
     // 1) im2col(input) -> d_input_col
     float* d_input_col = nullptr;
     cerr = cudaMalloc(&d_input_col, (size_t)batch_size * col_h * col_w * sizeof(float));
-    if (cerr != cudaSuccess){
-        std::cerr << "cudaMalloc d_input_col failed: " << cudaGetErrorString(cerr) << std::endl;
-        return;
-    }
     im2col(input, d_input_col, batch_size, in_channels, height, width, stream);
 
     // 2) convert grad_output (NCHW) -> outcol (batch*col_h, out_channels)
     float* d_grad_outcol = nullptr;
     cerr = cudaMalloc(&d_grad_outcol, (size_t)batch_size * col_h * out_channels * sizeof(float));
-    if (cerr != cudaSuccess){
-        std::cerr << "cudaMalloc d_grad_outcol failed: " << cudaGetErrorString(cerr) << std::endl;
-        cudaFree(d_input_col);
-        return;
-    }
     nchw_to_nhwc(grad_output, d_grad_outcol, batch_size, out_channels, height, width, stream);
+
+// // 调试片段：在调用 nchw_to_nhwc(...) 后插入（仅用于调试）
+// cudaStreamSynchronize(stream); // 确保转换完成
+
+// auto read_dev_one = [](const float* dptr, size_t idx){
+//     float v=0.0f;
+//     cudaMemcpy(&v, dptr + idx, sizeof(float), cudaMemcpyDeviceToHost);
+//     return v;
+// };
+
+// int B = batch_size;
+// int C = out_channels;
+// int H = height;
+// int W = width;
+// int col_h_ = H * W;
+
+// // 检查若干随机或固定位置
+// std::vector<std::tuple<int,int,int,int>> checks = {
+//     {0, 0, 0, 0},
+//     {0, 1, 0, 1},
+//     {0, C-1, H-1, W-1},
+//     {B-1, C-1, H-1, W-1}
+// };
+// for (auto &t : checks){
+//     int b,oc,h,w;
+//     std::tie(b,oc,h,w) = t;
+//     size_t nchw_idx   = ((size_t)b * C + oc) * H * W + (size_t)h * W + w;
+//     size_t outcol_idx = ((size_t)b * col_h_ + (size_t)h * W + w) * C + oc;
+//     float v_nchw = read_dev_one(grad_output, nchw_idx);
+//     float v_out  = read_dev_one(d_grad_outcol, outcol_idx);
+//     printf("check (b=%d,oc=%d,h=%d,w=%d) nchw[%zu]=%f outcol[%zu]=%f\n",
+//            b,oc,h,w, nchw_idx, v_nchw, outcol_idx, v_out);
+// }
 
     // 3) dW = d_grad_outcol^T * input_col
     // shapes: d_grad_outcol (batch*col_h, out_channels), d_input_col (batch*col_h, col_w)
@@ -382,21 +412,10 @@ void backward_conv2d(float* input, float* filter,
         d_grad_outcol, d_input_col, grad_filter,
         out_channels, col_w, batch_size * col_h,
         1.0f, 0.0f, stream);
-    cerr = cudaGetLastError();
-    if (cerr != cudaSuccess){
-        std::cerr << "gemm dW launch error: " << cudaGetErrorString(cerr) << std::endl;
-        cudaFree(d_input_col); cudaFree(d_grad_outcol);
-        return;
-    }
 
     // 4) dInput: grad_input_col = d_grad_outcol * filter
     float* d_grad_input_col = nullptr;
     cerr = cudaMalloc(&d_grad_input_col, (size_t)batch_size * col_h * col_w * sizeof(float));
-    if (cerr != cudaSuccess){
-        std::cerr << "cudaMalloc d_grad_input_col failed: " << cudaGetErrorString(cerr) << std::endl;
-        cudaFree(d_input_col); cudaFree(d_grad_outcol);
-        return;
-    }
 
     gemm_gpu(TransposeType::NoTranspose, TransposeType::NoTranspose,
         d_grad_outcol, filter, d_grad_input_col,
@@ -404,17 +423,6 @@ void backward_conv2d(float* input, float* filter,
         1.0f, 0.0f, stream);
     // ensure GEMM finished before using d_grad_input_col on the same stream
     cerr = cudaStreamSynchronize(stream);
-    if (cerr != cudaSuccess){
-        std::cerr << "cudaStreamSynchronize after gemm failed: " << cudaGetErrorString(cerr) << std::endl;
-        cudaFree(d_grad_input_col); cudaFree(d_input_col); cudaFree(d_grad_outcol);
-        return;
-    }
-    cerr = cudaGetLastError();
-    if (cerr != cudaSuccess){
-        std::cerr << "post-gemm error: " << cudaGetErrorString(cerr) << std::endl;
-        cudaFree(d_grad_input_col); cudaFree(d_input_col); cudaFree(d_grad_outcol);
-        return;
-    }
 
     // 5) col2im: accumulate grad_input_col -> grad_input (NCHW)
     col2im(d_grad_input_col, grad_input, batch_size, in_channels, height, width, stream);
