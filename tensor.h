@@ -119,39 +119,48 @@ public:
     void print(){
         if (device == Device::CPU){
             int shapedim = shape.size();
-            for (int i = 0; i < shapedim; i++){
-                std::cout << '[';
+            if (shapedim == 1){
+                std::cout << "[ ";
+                for (int i = 0; i < size; i++){
+                    std::cout << h_data[i] << " ";
+                }
+                std::cout << "]" << std::endl;
+                return;
             }
+            if (shapedim == 2 && shape[1] == 1) {
+                std::cout << "[";
+                for (int i = 0; i < shape[0]; i++) {
+                    if (i!= 0) std::cout << " ";
+                    std::cout << "[ " << h_data[i] << " ]";
+                    if (i!= shape[0]-1) std::cout << "\n";
+                }
+                std::cout << "]" << std::endl;
+                return;
+            }
+            for (int i = 0; i < shapedim; i++)
+                std::cout << '[';
             std::cout << ' ';
             for (int i = 0; i < size; i++){
                 std::cout << h_data[i] << " ";
                 int count = 0;
                 for (int dim: strides){
-                    if (dim!= 1 && (i+1) % dim == 0 && i!= size-1){
-                        // std::cout << ']';
-                        // std::cout << std::endl;
-                        // std::cout << '[';
+                    if (dim!= 1 && (i+1) % dim == 0 && i!= size-1)
                         count ++;
-                    }
                 }
-                for (int j = 0; j < count; j++){
+                for (int j = 0; j < count; j++)
                     std::cout << ']';
-                }
                 if (count != 0){
                     std::cout << std::endl;
-                    for (int j = 0; j < shapedim - count ;j++){
+                    for (int j = 0; j < shapedim - count ;j++)
                         std::cout << ' ';
-                    }
                 }
-                for (int j = 0; j < count; j++){
+                for (int j = 0; j < count; j++)
                     std::cout << '[';
-                }
                 if (count != 0)
                     std::cout << ' ';                
             }
-            for (int i = 0; i < shape.size(); i++){
+            for (int i = 0; i < shape.size(); i++)
                 std::cout << ']';
-            }
             std::cout << std::endl;
         }
         else if (device == Device::GPU){
