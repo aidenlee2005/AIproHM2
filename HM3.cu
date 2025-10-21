@@ -87,7 +87,7 @@ void testConv2d(){
 }
 
 void testMaxpool2d(){
-    std::cout << "------Task2: Maxpooling layer------" << std::endl;
+    std::cout << "------Task3: Maxpooling layer------" << std::endl;
     std::cout << "Testing forward_maxpool2d function..." << std::endl <<std::endl;
     Tensor<float> input({1,3,4,4},Device::GPU); //batch_size, inchannel, height, width
     Tensor<float> output({1,3,2,2},Device::GPU); // batch_size, out_channel, height, width
@@ -117,9 +117,27 @@ void testMaxpool2d(){
     grad_input.print();
 
 }
+
+void testSoftmax(){
+    std::cout << "------Task4: Softmax layer------" << std::endl;
+    std::cout << "Testing forward_softmax function..." << std::endl <<std::endl;
+    Tensor<float> input({3,4},Device::GPU); //batch_size, classes_num
+    Tensor<float> output({3,4},Device::GPU); // batch_size, classes_num
+    matrix_init(input.get_data(), input.get_size());
+    forward_softmax(input.get_data(), output.get_data(),
+                /*batch_size*/3, /*classes_num*/4, /*stream*/0);
+    std::cout << "input:" <<  std::endl;
+    input.print();
+    std::cout << "output:" <<  std::endl;
+    output.print();
+    std::cout << std::endl;
+
+    
+}
 int main(){
 
     // testFC();
     // testConv2d();
-    testMaxpool2d();
+    // testMaxpool2d();
+    testSoftmax();
 }

@@ -7,6 +7,12 @@
 #include <cublas_v2.h>
 #include <curand.h>
 #include <cuda_runtime.h>
+#include <thrust/device_vector.h>
+#include <thrust/transform.h>
+#include <thrust/functional.h>
+#include <thrust/transform.h>
+#include <thrust/sequence.h>
+#include <thrust/gather.h>
 
 #ifndef CUDA_KERNAL_LOOP
 #define CUDA_KERNAL_LOOP(i,n)\
@@ -508,4 +514,81 @@ void backward_maxpool(const float* grad_output, const float* mask, float* grad_i
             batch_size, in_channels, in_h, in_w, out_h, out_w);
     }
 
+//Task4: Softmax Layer
+__global__ void softmax_forward_kernel(const float* input, float* output,
+    int batch_size, int num_classes){
+    int row = blockIdx.x;
+    if (row >= batch_size) return;
+
+    extern __shared__ float buf[]; //用于reduce
+    const float* input_row = input + row * num_classes;
+    float* output_row = output + row * num_classes;
+
+    float local_max = -INT32_MAX;
+    for (int i = threadIdx.x; i < num_classes; i += blockDim.x){
+        if (input_row[i] > local_max) local_max = input_row[i];
+    }
+    buf[threadIdx.x] = local_max;
+    __syncthreads();
+    //reduce max
+    for (int s = blockDim.x / 2; s > 0; s >>= 1){
+        if (threadIdx.x < s){
+            if (buf[threadIdx.x + s] > buf[threadIdx.x]){
+                buf[threadIdx.x] = buf[threadIdx.x + s];
+            }
+        }
+        __syncthreads();
+    }
+    float row_max = buf[0];
+    //compute exp 
+    float local_sum = 0.0f;
+    for (int i = threadIdx.x; i < num_classes; i += blockDim.x){
+        float val = expf(input_row[i] - row_max);
+        output_row[i] = val;
+        local_sum += val;
+    }
+    buf[threadIdx.x] = local_sum;
+    __syncthreads();
+    //reduce sum
+    for (int s = blockDim.x / 2; s > 0; s >>= 1){
+        if (threadIdx.x < s){
+            buf[threadIdx.x] += buf[threadIdx.x + s];
+        }
+        __syncthreads();
+    }
+    float row_sum = buf[0];
+    //compute softmax
+    float inv_row_sum = (row_sum != 0.0f) ? (1.0f / row_sum) : 0.0f;;
+    for (int i = threadIdx.x; i < num_classes; i += blockDim.x){
+        output_row[i] *= inv_row_sum;
+    }
+}
+
+void forward_softmax(const float* input, float* output,
+    int batch_size ,int num_classes, cudaStream_t stream){
+    //input shape (batch_size, num_classes)
+    //output shape (batch_size, num_classes)
+    int bs = 256;
+    dim3 grid(batch_size);
+    softmax_forward_kernel<<<grid, bs, /*shared memory*/bs * sizeof(float), stream>>>(input, output,
+        batch_size, num_classes);
+}
+
+//Task5: Cross Entropy Loss Layer
+
+void backward_cross_entropy(const float* softmax_output, const int* labels,
+    int batch_size, int num_classes, float* grad_input, cudaStream_t stream){
+        //softmax_output shape (batch_size, num_classes)
+        //labels shape (batch_size)
+        //grad_input shape (batch_size, num_classes)
+        //grad_input = softmax_output
+        cudaMemcpyAsync(grad_input, softmax_output, 
+            batch_size * num_classes * sizeof(float), cudaMemcpyDeviceToDevice, stream);
+        //grad_input(b, c) -= 1 if c == labels[b]
+        int bs = 256;
+        int gs = (batch_size + bs - 1) / bs;
+        subtract_labels<<<gs, bs, 0, stream>>>(grad_input, labels, batch_size, num_classes);
+        //grad_input /= batch_size
+        scale_tensor<<<gs, bs, 0, stream>>>(grad_input, batch_size * num_classes, 1.0f / batch_size);
+    }
 #endif //LAYERS_H
