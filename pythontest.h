@@ -1,4 +1,8 @@
 #include <iostream>
+#include <sstream>
+#include <string>
+
+extern std::vector<std::string> pythonoutput;
 
 #ifdef COLOR_STDOUT
 #define BOLD   "\033[1m"
@@ -17,28 +21,45 @@
 #endif
 
 #ifdef PYTEST_ON
-#define PYTEST  ""
+#define PYTEST  //nothing happens
 #else
 #define PYTEST  return
 #endif
 
-std::string run_python(const std::string& cmd) {
+std::vector<std::string> run_python_split(const std::string& cmd, char delim = '#') {
+
+    std::cout << BOLD << RED << "Running python..." << RESET << std::endl;
     std::string result;
     FILE* pipe = popen(cmd.c_str(), "r");
-    if (!pipe) return "ERROR";
+    if (!pipe) return {};
     char buffer[256];
     while (fgets(buffer, sizeof(buffer), pipe)) {
         result += buffer;
     }
     pclose(pipe);
-    return result;
+
+    // 分割字符串
+    std::vector<std::string> parts;
+    std::stringstream ss(result);
+    std::string item;
+    while (std::getline(ss, item, delim)) {
+        // 可选：去除首尾空格
+        size_t start = item.find_first_not_of(" \n\r\t");
+        size_t end = item.find_last_not_of(" \n\r\t");
+        if (start != std::string::npos && end != std::string::npos)
+            item = item.substr(start, end - start + 1);
+        else
+            item = "";
+        if (!item.empty())
+            parts.push_back(item);
+    }
+    return parts;
 }
 
-
-void runPy(const char * root){
+void runPy(int idx){
     PYTEST;
     std::cout << BOLD << GREEN << "**Pytorch Result**" << RESET << std::endl;
-    std::cout << GREEN << run_python(root) << RESET;
+    std::cout << GREEN << pythonoutput[idx] << RESET << std::endl;
     std::cout << BOLD << GREEN << "**CORRECT**" << RESET << std::endl;
     std::cout << std::endl;
 }

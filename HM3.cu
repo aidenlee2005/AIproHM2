@@ -1,8 +1,7 @@
 #include "testcase.h"
 #include <fstream>
 #include <cstring>
-
-int flag = 0;
+#include <vector>
 
 /*
 编译：
@@ -19,17 +18,18 @@ nvcc HM3.cu -o [name] -lcublas -lcurand
 
 */
 
+std::vector<std::string> pythonoutput = run_python_split("python3 pytest.py");;
+
 int main(int argc, char* argv[]){
     std::streambuf* coutbuf = nullptr;
     std::ofstream out;
     if (argc == 2 && std::strcmp(argv[1], "f") == 0){
-        flag = 1;
         out.open("testResult.txt");
         coutbuf = std::cout.rdbuf(); //save old buf
         std::cout.rdbuf(out.rdbuf());
     }
 
-    std::cout << BOLD << RED << "Running HM3 test cases..." << RESET << std::endl;
+    std::cout << BOLD << RED << "Running HM3 test cases..." << RESET << std::endl <<std::endl;
     testFC();
     testConv2d();
     testMaxpool2d();
@@ -38,7 +38,7 @@ int main(int argc, char* argv[]){
 
     std::cout.flush();
 
-    if (flag == 1){
+    if (coutbuf){
         std::cout.rdbuf(coutbuf);
     }
 }

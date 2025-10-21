@@ -2,6 +2,7 @@
 #include "layers.h"
 #include "pythontest.h"
 
+extern std::vector<std::string> pythonoutput;
 
 void testFC(){
     std::cout << BOLD << BLUE << "---------Task1: fully-connected layer---------" << RESET << std::endl;
@@ -29,7 +30,7 @@ void testFC(){
 
     std::cout << BOLD << "output:" << RESET <<  std::endl;
     output.print();
-    runPy("python3 /root/autodl-tmp/HM3PyTest/test1_forward.py");
+    runPy(0);
     std::cout << std::endl;
 
     std::cout << BOLD << YELLOW << "Testing backward_fc function..." << RESET << std::endl << std::endl;
@@ -52,15 +53,15 @@ void testFC(){
 
     std::cout << BOLD << "grad_input:" << RESET << std::endl;
     grad_input.print();
-    runPy("python3 /root/autodl-tmp/HM3PyTest/test1_gradinput.py");
+    runPy(1);
 
     std::cout << BOLD << "grad_weight:" << RESET << std::endl;
     grad_weight.print(); 
-    runPy("python3 /root/autodl-tmp/HM3PyTest/test1_gradweight.py");
+    runPy(2);
 
     std::cout << BOLD << "grad_bias:" << RESET << std::endl;
     grad_bias.print();
-    runPy("python3 /root/autodl-tmp/HM3PyTest/test1_gradbias.py");
+    runPy(3);
 
     std::cout << std::endl;
 }
@@ -86,7 +87,7 @@ void testConv2d(){
 
     std::cout << BOLD << "output:" << RESET <<  std::endl;
     output.print();
-    runPy("python3 /root/autodl-tmp/HM3PyTest/test2_forwardoutput.py");
+    runPy(4);
 
     std::cout << std::endl;
 
@@ -110,11 +111,11 @@ void testConv2d(){
 
     std::cout << BOLD << "grad_input:" << RESET << std::endl;
     grad_input.print();
-    runPy("python3 /root/autodl-tmp/HM3PyTest/test2_gradinput.py");
+    runPy(5);
 
     std::cout << BOLD << "grad_weight:" << RESET << std::endl;
     grad_weight.print();
-    runPy("python3 /root/autodl-tmp/HM3PyTest/test2_gradweight.py");
+    runPy(6);
 
     std::cout << std::endl;
 }
@@ -137,7 +138,7 @@ void testMaxpool2d(){
 
     std::cout << BOLD << "output:" << RESET << std::endl;
     output.print();
-    runPy("python3 /root/autodl-tmp/HM3PyTest/test3_forwardoutput.py");
+    runPy(7);
 
     std::cout << BOLD << "mask:" << RESET << std::endl;
     mask.print();
@@ -159,7 +160,7 @@ void testMaxpool2d(){
 
     std::cout << BOLD << "grad_input:" << RESET << std::endl;
     grad_input.print();
-    runPy("python3 /root/autodl-tmp/HM3PyTest/test3_backward.py");
+    runPy(8);
 
     std::cout << std::endl;
 }
@@ -185,7 +186,7 @@ void testSoftmaxAndCrossEntropy(){
 
     std::cout << BOLD  << "output:"<< RESET <<  std::endl;
     output.print();
-    runPy("python3 /root/autodl-tmp/HM3PyTest/test4_softmax.py");
+    runPy(9);
 
     std::cout << std::endl;
 
@@ -195,11 +196,11 @@ void testSoftmaxAndCrossEntropy(){
     forward_cross_entropy(output.get_data(), target.get_data(), &loss,  3, 4, 0);
 
     std::cout << BOLD  << "loss:"<< RESET << std::endl << loss << std::endl;
-    runPy("python3 /root/autodl-tmp/HM3PyTest/test5_loss.py");
+    runPy(10);
 
     backward_cross_entropy(output.get_data(), target.get_data(), 3, 4, grad_output.get_data(), 0);
     
     std::cout << BOLD  << "grad_output:"<< RESET <<  std::endl;
     grad_output.print();
-    runPy("python3 /root/autodl-tmp/HM3PyTest/test5_gradoutput.py");
+    runPy(11);
 }
