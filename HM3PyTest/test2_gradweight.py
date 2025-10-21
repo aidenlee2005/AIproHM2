@@ -47,7 +47,7 @@ dtype=torch.float32, requires_grad=True)
 # Forward: conv2d with same padding
 # ----------------------------
 output = F.conv2d(input_data, weight_data, stride=1, padding=1)
-print("Forward output:\n", output.detach().numpy().round(2))
+# print("Forward output:\n", output.detach().numpy().round(2))
 
 # ----------------------------
 # Backward: 给定 grad_output
@@ -68,5 +68,5 @@ output.backward(grad_output)
 # ----------------------------
 # 打印反向传播结果
 # ----------------------------
-print("\nGrad Input:\n", input_data.grad.detach().numpy().round(2))
-print("\nGrad Weight:\n", weight_data.grad.detach().numpy().round(2))
+# print("\nGrad Input:\n", input_data.grad.detach().numpy().round(2))
+print(weight_data.grad.detach().numpy().round(2))

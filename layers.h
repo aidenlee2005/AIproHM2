@@ -29,28 +29,6 @@ __global__ void fill_elements(float* data, int n, float value) {
     if (idx < n) data[idx] = value;
 }
 
-//C(m,n) = alf * A(m,k) * B(k,n) + bet * C(m,n)
-// void gemm_gpu(TransposeType transA, TransposeType transB, const float* A, const float* B, float* C, 
-//     const int m, const int n, const int k, const float alf, const float bet){
-//         int lda, ldb, ldc;
-//         ldc = m;
-//         const float* alpha = &alf;
-//         const float* beta = &bet;
-//         cublasHandle_t handle; cublasCreate(&handle);
-//         lda = (transA == TransposeType::NoTranspose) ? m : k;
-//         ldb = (transB == TransposeType::NoTranspose) ? k : n;
-//         cublasOperation_t cuTransA = (transA == TransposeType::NoTranspose) ? CUBLAS_OP_N : CUBLAS_OP_T;
-//         cublasOperation_t cuTransB = (transB == TransposeType::NoTranspose) ? CUBLAS_OP_N : CUBLAS_OP_T;
-//         cublasSgemm(handle, cuTransA, cuTransB,
-//              m, n, k, 
-//              alpha, 
-//              A, lda, 
-//              B, ldb, 
-//              beta, 
-//              C, ldc);
-//         cublasDestroy(handle);
-//     }
-
 void gemm_gpu(TransposeType transA, TransposeType transB,
               const float* A, const float* B, float* C,
               const int m, const int n, const int k,
@@ -109,7 +87,7 @@ __global__ void quantize_one_decimal(float* data, int n){
 }
 
 //random filling
-void matrix_init(float* A, int n, unsigned long long seed = 123456){
+void matrix_init_float(float* A, int n, unsigned long long seed = 123456){
     curandGenerator_t gen;
     curandCreateGenerator(&gen, CURAND_RNG_PSEUDO_DEFAULT);
     curandSetPseudoRandomGeneratorSeed(gen, seed);
@@ -121,6 +99,30 @@ void matrix_init(float* A, int n, unsigned long long seed = 123456){
     quantize_one_decimal<<<gs, bs>>>(A, n);
 }
 
+__global__ void float_to_int_range(const float* src, int* dst, int n, int min_val, int range){
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < n){
+        // 映射到 [min_val, min_val+range)
+        int value = (int)(src[idx] * range) + min_val;
+        dst[idx] = value;
+    }
+}
+
+void matrix_init_int(int* A, int n, int min_val, int max_val, unsigned long long seed = 123456){
+    float* tmp;
+    cudaMalloc(&tmp, n * sizeof(float));
+    curandGenerator_t gen;
+    curandCreateGenerator(&gen, CURAND_RNG_PSEUDO_DEFAULT);
+    curandSetPseudoRandomGeneratorSeed(gen, seed);
+    curandGenerateUniform(gen, tmp, n);
+    curandDestroyGenerator(gen);
+
+    int range = max_val - min_val;
+    int bs = 256;
+    int gs = (n + bs - 1) / bs;
+    float_to_int_range<<<gs, bs>>>(tmp, A, n, min_val, range);
+    cudaFree(tmp);
+}
 
 //Task1: Fully Connected Layer
 void forward_fc(float* input, float* output, float* weight, float* bias,
@@ -576,19 +578,94 @@ void forward_softmax(const float* input, float* output,
 
 //Task5: Cross Entropy Loss Layer
 
+__inline__ __device__ float blockReduceSum(float val) {
+    extern __shared__ float buf[];
+    int tid = threadIdx.x;
+    buf[tid] = val;
+    __syncthreads();
+
+    for (int s = blockDim.x / 2; s > 0; s >>= 1) {
+        if (tid < s) buf[tid] += buf[tid + s];
+        __syncthreads();
+    }
+    return buf[0];
+}
+
+__global__ void loss_kernel(const float* input, const int* labels, float* loss,
+    int batch_size, int num_classes){
+
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    float local_loss = 0.0f;
+    if (idx < batch_size) {
+        int label = labels[idx];
+        float prob = input[idx * num_classes + label];
+        prob = fmaxf(prob, 1e-12f);  // 防止 log(0)
+        local_loss = -logf(prob);
+    }
+
+    // block 内归约求和
+    float block_sum = blockReduceSum(local_loss);
+
+    // 仅由 block 内线程0 累加到全局 loss
+    if (threadIdx.x == 0) {
+        atomicAdd(loss, block_sum);
+    }
+}
+
+void forward_cross_entropy(const float* input, const int* labels, float* loss,
+    int batch_size, int num_classes, cudaStream_t stream){
+        //input shape (batch_size, num_classes)
+        //labels shape (batch_size)
+        //loss shape (1)
+        float* d_loss;
+        float h_loss = 0.0f;
+        cudaMalloc(&d_loss, sizeof(float));
+        cudaMemcpy(d_loss, &h_loss, sizeof(float), cudaMemcpyHostToDevice);
+
+        int threads = 256;
+        int blocks = (batch_size + threads - 1) / threads;
+        size_t shared_mem = threads * sizeof(float);
+
+        loss_kernel<<<blocks, threads, shared_mem, stream>>>(input, labels, d_loss,
+            batch_size, num_classes);
+        
+        cudaMemcpyAsync(&h_loss, d_loss, sizeof(float), cudaMemcpyDeviceToHost, stream);
+        cudaStreamSynchronize(stream);
+        *loss = h_loss / batch_size;
+        cudaFree(d_loss);
+    }
+
+__global__ void subtract_labels(float* grad_input, const int* labels, int batch_size, int num_classes){
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < batch_size) {
+        int label = labels[idx];
+        grad_input[idx * num_classes + label] -= 1.0f;
+    }
+}
+
+__global__ void scale_grad(float* grad_input, int n, float scale){
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < n){
+        grad_input[idx] *= scale;
+    }
+}
+
+
 void backward_cross_entropy(const float* softmax_output, const int* labels,
-    int batch_size, int num_classes, float* grad_input, cudaStream_t stream){
+    int batch_size, int num_classes, float* grad_output, cudaStream_t stream){
         //softmax_output shape (batch_size, num_classes)
         //labels shape (batch_size)
-        //grad_input shape (batch_size, num_classes)
-        //grad_input = softmax_output
-        cudaMemcpyAsync(grad_input, softmax_output, 
+        //grad_output shape (batch_size, num_classes)
+        //grad_output = softmax_output
+
+        //compute grad_output
+        cudaMemcpyAsync(grad_output, softmax_output, 
             batch_size * num_classes * sizeof(float), cudaMemcpyDeviceToDevice, stream);
-        //grad_input(b, c) -= 1 if c == labels[b]
+        //grad_output(b, c) -= 1 if c == labels[b]
         int bs = 256;
         int gs = (batch_size + bs - 1) / bs;
-        subtract_labels<<<gs, bs, 0, stream>>>(grad_input, labels, batch_size, num_classes);
-        //grad_input /= batch_size
-        scale_tensor<<<gs, bs, 0, stream>>>(grad_input, batch_size * num_classes, 1.0f / batch_size);
+        subtract_labels<<<gs, bs, 0, stream>>>(grad_output, labels, batch_size, num_classes);
+        //grad_output /= batch_size
+        scale_grad<<<gs, bs, 0, stream>>>(grad_output, batch_size * num_classes, 1.0f / batch_size);
     }
 #endif //LAYERS_H
